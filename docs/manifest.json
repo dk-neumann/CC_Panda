@@ -5,7 +5,7 @@
     {
       "chipFamily": "ESP32",
       "parts": [
-        { "path": "firmware.bin", "offset": 65536 }
+        { "path": "CC_Panda_V4.ino.merged", "offset": 0 }
       ]
     }
   ]
