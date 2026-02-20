@@ -1,0 +1,12 @@
+{
+  "name": "Centauri Panda Monitor",
+  "version": "4.0.0",
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware.bin", "offset": 0 }
+      ]
+    }
+  ]
+}
