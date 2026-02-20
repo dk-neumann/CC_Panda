@@ -1,15 +1,27 @@
+#include <FS.h>
+// #include <LITTLEFS.h> 
+#include <SPIFFS.h>
 #include <WiFi.h>
 #include <WebSocketsClient_Generic.h>
 #include <ArduinoJson.h>
 #include <lvgl.h>
 #include <TFT_eSPI.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
+#include <WiFiManager.h>
 
 // ---- CONFIGURATION ----
 const char* ssid = "NEUMANN WIFI";
 const char* password = "12345678";
-const char* elegoo = "192.168.40.177";
+// const char* elegoo = "192.168.40.177";
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
+
+WiFiUDP udp;
+const int udpPort = 3000;
+char incomingPacket[1024];
+
+String printerIP = ""; // Global to store the found IP
 
 // ---- UI STRUCTURE ----
 struct {
@@ -33,7 +45,7 @@ struct {
 TFT_eSPI tft = TFT_eSPI();
 WebSocketsClient ws;
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[screenWidth * 10];
+static lv_color_t buf[screenWidth * 8];
 
 // ---- PROTOTYPES ----
 void ui_create_main_screen();
@@ -54,7 +66,7 @@ void init_lvgl() {
     lv_init();
     tft.begin();
     tft.setRotation(1);
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 8);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
@@ -63,6 +75,53 @@ void init_lvgl() {
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
+}
+// ---- Printer Discovery
+bool discoverPrinterUDP() {
+    Serial.println(F("Starting UDP Discovery..."));
+    
+    // Check if we are connected to WiFi first
+    if (WiFi.status() != WL_CONNECTED) return false;
+
+    udp.begin(udpPort);
+    IPAddress broadcastIP(255, 255, 255, 255);
+    
+    udp.beginPacket(broadcastIP, udpPort);
+    udp.print("M99999");
+    udp.endPacket();
+
+    unsigned long startMs = millis();
+    // Use a small local buffer instead of a large global one
+    char packetBuffer[512]; 
+
+    while (millis() - startMs < 5000) {
+        int packetSize = udp.parsePacket();
+        if (packetSize) {
+            int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+            if (len > 0) {
+                packetBuffer[len] = 0;
+                
+                // Reduced JSON doc size to save DRAM
+                StaticJsonDocument<512> doc;
+                if (!deserializeJson(doc, packetBuffer)) {
+                    const char* ip = doc["Data"]["MainboardIP"];
+                    if (ip) {
+                        printerIP = String(ip);
+                        Serial.print(F("Printer Found: "));
+                        Serial.println(printerIP);
+                        udp.stop();
+                        return true;
+                    }
+                }
+            }
+        }
+        lv_timer_handler(); // Keep screen responsive
+        yield(); 
+    }
+    
+    udp.stop();
+    Serial.println(F("Discovery Timed Out"));
+    return false;
 }
 
 // ---- SDCP MESSAGES ----
@@ -154,7 +213,7 @@ void onWebSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
             ws.sendTXT(makeSubscribe());
             break;
         case WStype_TEXT: {
-            StaticJsonDocument<4096> doc;
+            StaticJsonDocument<2048> doc;
             auto err = deserializeJson(doc, payload, length);
             if (!err) parseStatus(doc);
             break;
@@ -215,13 +274,30 @@ void setup() {
     init_lvgl();
     ui_create_main_screen();
     
-    WiFi.begin(ssid, password);
+    WiFiManager wm;
+    // This will block until connected or timed out
+    bool res = wm.autoConnect("Panda-Monitor-Setup"); 
+    if(!res) {
+        Serial.println("Failed to connect");
+        ESP.restart();
+    }
+    // If you reach here, you are connected to WiFi!
+    // WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         lv_timer_handler();
         delay(100);
     }
-
-    ws.begin(elegoo, 3030, "/websocket");
+    MDNS.begin("panda-monitor");
+    // Inside setup()
+    if (discoverPrinterUDP()) {
+        Serial.println("Found Printer");
+        ws.begin(printerIP.c_str(), 3030, "/websocket");
+    } else {
+        Serial.println("No Printer found");
+        lv_label_set_text(ui.label_state, "State: MdNS name Not Found");
+        // ws.begin(elegoo, 3030, "/websocket");
+    }
+    
     ws.onEvent(onWebSocketEvent);
     ws.setReconnectInterval(5000);
 }
