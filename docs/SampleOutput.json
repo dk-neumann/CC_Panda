@@ -1,0 +1,46 @@
+{
+  "Status": {
+    "CurrentStatus": [
+      1
+    ],
+    "TimeLapseStatus": 0,
+    "PlatFormType": 0,
+    "TempOfHotbed": 75.07856585,
+    "TempOfNozzle": 219.813505,
+    "TempOfBox": 30.96597127,
+    "TempTargetHotbed": 75,
+    "TempTargetNozzle": 220,
+    "TempTargetBox": 0,
+    "CurrenCoord": "124.88,160.32,11.24",
+    "CurrentFanSpeed": {
+      "ModelFan": 100,
+      "AuxiliaryFan": 69,
+      "BoxFan": 100
+    },
+    "ZOffset": 1e-14,
+    "LightStatus": {
+      "SecondLight": 1,
+      "RgbLight": [
+        0,
+        0,
+        0
+      ]
+    },
+    "PrintInfo": {
+      "Status": 13,
+      "CurrentLayer": 56,
+      "TotalLayer": 290,
+      "54 6F 74 61 6C 45 78 74 72 75 73 69 6F 6E 00": 3148.290058,
+      "43 75 72 72 65 6E 74 45 78 74 72 75 73 69 6F 6E 00": 9.109792001,
+      "CurrentTicks": 1281.605554,
+      "TotalTicks": 3578,
+      "Filename": "ECC_0.4_Army Blue_PLA0.2_59m38s.gcode",
+      "TaskId": "1e6534f5-fa24-4b94-b508-0cfc95367eb2",
+      "PrintSpeedPct": 100,
+      "Progress": 36
+    }
+  },
+  "MainboardID": "1c761f940107202800007c0000000000",
+  "TimeStamp": 1771614204,
+  "Topic": "sdcp/status/1c761f940107202800007c0000000000"
+}

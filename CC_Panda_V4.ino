@@ -153,6 +153,7 @@ String makeSubscribe() {
     return out;
 }
 
+
 // ---- DATA PARSING ----
 void parseStatus(JsonDocument& doc) {
     if (!doc.containsKey("Status")) return;
@@ -171,7 +172,7 @@ void parseStatus(JsonDocument& doc) {
     const char* filename = s["PrintInfo"]["Filename"];
     
     // Note: Add logic here to extract fan speed if available in your JSON
-    // int fanSpeed = s["FanSpeed"]; 
+    int fanSpeed = s["CurrentFanSpeed"]["BoxFan"]; 
     
     // Debug code to see actual values returned from websockets
     Serial.println("---- Printer Status ----");
@@ -180,14 +181,16 @@ void parseStatus(JsonDocument& doc) {
     Serial.printf("Chamber: %.2f\n", box);
     Serial.printf("Progress: %d%%\n", progress);
     Serial.printf("Layer: %d / %d\n", layer, totalLayer);
+    Serial.printf("Fan Speed: %d\n", fanSpeed);
     Serial.printf("File: %s\n", filename);
     Serial.printf("State Code: %d\n", status);
     Serial.println("------------------------");
-    update_ui_elements(nozzle, nozzleTarget, bed, bedTarget, box, progress, layer, totalLayer, filename, status);
+
+    update_ui_elements(nozzle, nozzleTarget, bed, bedTarget, box, progress, layer, totalLayer, filename, status, fanSpeed);
 }
 
 // ---- UI UPDATES ----
-void update_ui_elements(float nozzle, int nozzleTarget, float bed, int bedTarget, float box, int progress, int layer, int totalLayer, const char* filename, int status) {
+void update_ui_elements(float nozzle, int nozzleTarget, float bed, int bedTarget, float box, int progress, int layer, int totalLayer, const char* filename, int status, int fanSpeed) {
     // Temps with explicit double casting for LV_SPRINTF_USE_FLOAT [cite: 93, 94]
     lv_label_set_text_fmt(ui.label_nozzle, "N: %.1f/%d°C", (double)nozzle, nozzleTarget);
     lv_label_set_text_fmt(ui.label_bed, "B: %.1f/%d°C", (double)bed, bedTarget);
@@ -198,10 +201,13 @@ void update_ui_elements(float nozzle, int nozzleTarget, float bed, int bedTarget
     lv_label_set_text_fmt(ui.label_pct, "%d%%", progress);
     lv_label_set_text_fmt(ui.label_layer, "Layer: %d/%d", layer, totalLayer);
     lv_label_set_text_fmt(ui.label_file, "File: %s", filename ? filename : "None");
+    lv_label_set_text_fmt(ui.label_fan, "Fan: %d", fanSpeed);
 
     // State
-    const char* stateStr = (status == 0) ? "Idle" : (status == 1) ? "Heating" : (status == 2) ? "Printing" : (status == 3) ? "Paused" : "Error";
-    lv_label_set_text_fmt(ui.label_state, "State: %s", stateStr);
+    // For testing just display the actual code
+    // const char* stateStr = (status == 0) ? "Idle" : (status == 1) ? "Heating" : (status == 2) ? "Printing" : (status == 3) ? "Paused" : "Error";
+    // lv_label_set_text_fmt(ui.label_state, "State: %s", stateStr);
+    lv_label_set_text_fmt(ui.label_state, "Status: %d", status);
 }
 
 // ---- WEBSOCKET EVENT HANDLER ----
@@ -266,6 +272,18 @@ void ui_create_main_screen() {
     lv_label_set_text(ui.label_fan, "Fan: --%");
 }
 
+void configModeCallback (WiFiManager *myWiFiManager) {
+  Serial.println("Entered config mode");
+  lv_label_set_text(ui.label_state, "State: CONFIG PORTAL ACTIVE");
+  lv_label_set_text(ui.label_file, "Connect phone to: Panda-Monitor-Setup");
+  
+  // Force a UI refresh since WiFiManager will now block
+  for(int i=0; i<20; i++) {
+    lv_timer_handler();
+    delay(10);
+  }
+}
+
 void setup() {
     pinMode(21, OUTPUT);
     digitalWrite(21, HIGH); 
@@ -273,20 +291,26 @@ void setup() {
 
     init_lvgl();
     ui_create_main_screen();
-    
+
+
     WiFiManager wm;
     // This will block until connected or timed out
+
+
     bool res = wm.autoConnect("Panda-Monitor-Setup"); 
     if(!res) {
         Serial.println("Failed to connect");
         ESP.restart();
     }
-    // If you reach here, you are connected to WiFi!
+
+    //If you reach here, you are connected to WiFi!
     // WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        lv_timer_handler();
-        delay(100);
-    }
+    // while (WiFi.status() != WL_CONNECTED) {
+    //     lv_timer_handler();
+    //     delay(100);
+    // }
+    lv_label_set_text(ui.label_state, "State: Connecting to Printer...");   
+
     MDNS.begin("panda-monitor");
     // Inside setup()
     if (discoverPrinterUDP()) {
