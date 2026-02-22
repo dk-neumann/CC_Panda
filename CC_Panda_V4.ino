@@ -9,6 +9,7 @@
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <WiFiManager.h>
+#include <XPT2046_Touchscreen.h>
 
 // ---- CONFIGURATION ----
 const char* ssid = "NEUMANN WIFI";
@@ -17,11 +18,54 @@ const char* password = "12345678";
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
 
+// CYD Touch Pins
+#define XPT2046_IRQ 36
+#define XPT2046_MOSI 32
+#define XPT2046_MISO 39
+#define XPT2046_CLK 25
+#define XPT2046_CS 33
+
+SPIClass mySpi = SPIClass(VSPI);
+XPT2046_Touchscreen ts(XPT2046_CS, XPT2046_IRQ);
+
 WiFiUDP udp;
 const int udpPort = 3000;
 char incomingPacket[1024];
 
 String printerIP = ""; // Global to store the found IP
+// LVGL Touch Read Callback
+void my_touchpad_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data) {
+    if (ts.touched()) {
+        TS_Point p = ts.getPoint();
+        // Calibrate these values based on your specific screen
+        data->point.x = map(p.x, 200, 3700, 0, screenWidth);
+        data->point.y = map(p.y, 240, 3800, 0, screenHeight);
+        data->state = LV_INDEV_STATE_PR;
+    } else {
+        data->state = LV_INDEV_STATE_REL;
+    }
+}
+void init_touch() {
+    mySpi.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
+    ts.begin(mySpi);
+    ts.setRotation(1);
+
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = my_touchpad_read;
+    lv_indev_drv_register(&indev_drv);
+}
+
+void settings_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_CLICKED) {
+        Serial.println("Resetting WiFi Settings...");
+        WiFiManager wm;
+        wm.resetSettings();
+        ESP.restart();
+    }
+}
 
 // ---- UI STRUCTURE ----
 struct {
@@ -39,6 +83,7 @@ struct {
     // Bottom Bar
     lv_obj_t *label_state;
     lv_obj_t *label_fan;
+    lv_obj_t *btn_settings;
 } ui;
 
 // ---- GLOBALS ----
@@ -188,6 +233,28 @@ void parseStatus(JsonDocument& doc) {
 
     update_ui_elements(nozzle, nozzleTarget, bed, bedTarget, box, progress, layer, totalLayer, filename, status, fanSpeed);
 }
+// Converts status code to string for label
+const char* getStatusText(int code) {
+    switch (code) {
+        case 0:  return "Idle / Waiting";
+        case 1:  return "Stopping...";
+        case 5:  return "Suspending...";
+        case 6:  return "Paused";
+        case 8:  
+        case 14: return "Stopped";
+        case 9:  return "Complete";
+        case 10: return "Detecting File";
+        case 12: return "Recovery";
+        case 13: return "Printing";
+        case 15:
+        case 16:
+        case 18:
+        case 19:
+        case 20:
+        case 21: return "Loading...";
+        default: return "Unknown State";
+    }
+}
 
 // ---- UI UPDATES ----
 void update_ui_elements(float nozzle, int nozzleTarget, float bed, int bedTarget, float box, int progress, int layer, int totalLayer, const char* filename, int status, int fanSpeed) {
@@ -204,10 +271,18 @@ void update_ui_elements(float nozzle, int nozzleTarget, float bed, int bedTarget
     lv_label_set_text_fmt(ui.label_fan, "Fan: %d", fanSpeed);
 
     // State
-    // For testing just display the actual code
-    // const char* stateStr = (status == 0) ? "Idle" : (status == 1) ? "Heating" : (status == 2) ? "Printing" : (status == 3) ? "Paused" : "Error";
-    // lv_label_set_text_fmt(ui.label_state, "State: %s", stateStr);
-    lv_label_set_text_fmt(ui.label_state, "Status: %d", status);
+    const char* stateStr = getStatusText(status);
+    if (status == 0 && nozzleTarget > 0) {
+       stateStr = "Heating...";
+    }
+    lv_label_set_text_fmt(ui.label_state, "State: %s", stateStr);
+    if (status == 13) { // Printing
+        lv_obj_set_style_text_color(ui.label_state, lv_palette_main(LV_PALETTE_GREEN), 0);
+    } else if (status == 6) { // Paused
+        lv_obj_set_style_text_color(ui.label_state, lv_palette_main(LV_PALETTE_ORANGE), 0);
+    } else {
+        lv_obj_set_style_text_color(ui.label_state, lv_palette_main(LV_PALETTE_GREY), 0);
+    }
 }
 
 // ---- WEBSOCKET EVENT HANDLER ----
@@ -234,7 +309,8 @@ void onWebSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 void ui_create_main_screen() {
     lv_obj_t *scr = lv_scr_act();
     lv_obj_clean(scr);
-
+    // Label for Network Names
+    // lv_obj_t * list = lv_list_create(lv_scr_act());
     // TOP BAR
     ui.label_nozzle = lv_label_create(scr);
     lv_obj_align(ui.label_nozzle, LV_ALIGN_TOP_LEFT, 10, 10);
@@ -270,6 +346,17 @@ void ui_create_main_screen() {
     ui.label_fan = lv_label_create(scr);
     lv_obj_align(ui.label_fan, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
     lv_label_set_text(ui.label_fan, "Fan: --%");
+
+    // Create a small button for settings
+    ui.btn_settings = lv_btn_create(scr);
+    lv_obj_set_size(ui.btn_settings, 30, 30);
+    lv_obj_align(ui.btn_settings, LV_ALIGN_TOP_RIGHT, -5, 35); // Just below the chamber temp
+    lv_obj_add_event_cb(ui.btn_settings, settings_event_cb, LV_EVENT_ALL, NULL);
+    
+    // Add a Gear icon to the button
+    lv_obj_t * label = lv_label_create(ui.btn_settings);
+    lv_label_set_text(label, LV_SYMBOL_SETTINGS);
+    lv_obj_center(label);
 }
 
 void configModeCallback (WiFiManager *myWiFiManager) {
@@ -288,21 +375,31 @@ void setup() {
     pinMode(21, OUTPUT);
     digitalWrite(21, HIGH); 
     Serial.begin(115200);
+// Initialize Touch
+    SPI.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
+    ts.begin();
+    ts.setRotation(1);
 
     init_lvgl();
-    ui_create_main_screen();
 
+    // Register Touch with LVGL
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = my_touchpad_read;
+    lv_indev_drv_register(&indev_drv);
+    
+    ui_create_main_screen();
 
     WiFiManager wm;
     // This will block until connected or timed out
+    wm.setAPCallback(configModeCallback);
 
-
-    bool res = wm.autoConnect("Panda-Monitor-Setup"); 
-    if(!res) {
-        Serial.println("Failed to connect");
+    // This triggers the portal if no WiFi is saved
+    if(!wm.autoConnect("Panda-Monitor-Setup")) {
+        Serial.println("failed to connect and hit timeout");
         ESP.restart();
     }
-
     //If you reach here, you are connected to WiFi!
     // WiFi.begin(ssid, password);
     // while (WiFi.status() != WL_CONNECTED) {
